@@ -28,21 +28,112 @@ const BROWSER_HEADERS = {
   "upgrade-insecure-requests": "1",
 };
 
-function extractFollowerCount(html) {
-  const patterns = [
-    /"followerCount":\s*(\d+)/i,
-    /"followers":\s*"?(?:about\s*)?([\d,\.]+)"?/i,
-    /([\d,\.]+)\s+followers/gi,
-    /([\d,\.]+)\s+Follower/gi,
-  ];
-
-  for (const pattern of patterns) {
-    pattern.lastIndex = 0;
-    const match = pattern.exec(html);
-    if (!match) continue;
-    const digits = String(match[1]).replace(/[^\d]/g, "");
-    if (digits && Number(digits) > 0) return Number(digits);
+function companyVanityFromUrl(urlString) {
+  try {
+    const u = new URL(urlString);
+    const parts = u.pathname.split("/").filter(Boolean);
+    const i = parts.indexOf("company");
+    if (i >= 0 && parts[i + 1]) {
+      return decodeURIComponent(parts[i + 1]).toLowerCase();
+    }
+  } catch {
+    /* ignore */
   }
+  return null;
+}
+
+/**
+ * Pick the most common value — LinkedIn embeds the real org count many times;
+ * feed/sidebar noise is often a single stray number. If multiple values tie for
+ * top frequency, treat as ambiguous (caller should not trust plain-text matches).
+ */
+function modeInt(values) {
+  const freq = new Map();
+  for (const n of values) {
+    if (!Number.isFinite(n) || n <= 0) continue;
+    freq.set(n, (freq.get(n) || 0) + 1);
+  }
+  if (!freq.size) return { value: null, ambiguous: false };
+
+  let bestCount = 0;
+  for (const c of freq.values()) {
+    if (c > bestCount) bestCount = c;
+  }
+  const winners = [...freq.keys()].filter((n) => freq.get(n) === bestCount);
+  return {
+    value: winners[0],
+    ambiguous: winners.length > 1,
+  };
+}
+
+function collectAll(re, html) {
+  const out = [];
+  re.lastIndex = 0;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const digits = String(m[1]).replace(/[^\d]/g, "");
+    if (digits) out.push(Number(digits));
+  }
+  return out;
+}
+
+/**
+ * LinkedIn HTML mixes many "followers" strings (feed, similar pages). The first
+ * regex match is often wrong. Prefer org-specific JSON keys and counts tied to
+ * this company's publicIdentifier, then the mode of embedded followerCount ints.
+ */
+function extractFollowerCount(html, pageUrl) {
+  const vanity = companyVanityFromUrl(pageUrl);
+
+  const memberMatches = collectAll(
+    /"memberFollowersCount"\s*:\s*(\d+)/gi,
+    html,
+  );
+  if (memberMatches.length) {
+    const { value, ambiguous } = modeInt(memberMatches);
+    if (value !== null && !ambiguous) return value;
+  }
+
+  if (vanity) {
+    const esc = vanity.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const forward = new RegExp(
+      `"publicIdentifier"\\s*:\\s*"${esc}"[\\s\\S]{0,40000}?"followerCount"\\s*:\\s*(\\d+)`,
+      "i",
+    );
+    const fm = html.match(forward);
+    if (fm) return Number(fm[1]);
+    const backward = new RegExp(
+      `"followerCount"\\s*:\\s*(\\d+)[\\s\\S]{0,40000}?"publicIdentifier"\\s*:\\s*"${esc}"`,
+      "i",
+    );
+    const bm = html.match(backward);
+    if (bm) return Number(bm[1]);
+  }
+
+  const fromFollowerCountKey = collectAll(
+    /"followerCount"\s*:\s*(\d+)/gi,
+    html,
+  );
+  if (fromFollowerCountKey.length) {
+    const { value, ambiguous } = modeInt(fromFollowerCountKey);
+    if (value !== null && !ambiguous) return value;
+  }
+
+  const fromFollowersKey = collectAll(
+    /"followers"\s*:\s*"?(?:about\s*)?([\d,\.]+)"?/gi,
+    html,
+  );
+  if (fromFollowersKey.length) {
+    const { value, ambiguous } = modeInt(fromFollowersKey);
+    if (value !== null && !ambiguous) return value;
+  }
+
+  const plain = collectAll(/([\d,\.]+)\s+followers/gi, html);
+  if (plain.length) {
+    const { value, ambiguous } = modeInt(plain);
+    if (value !== null && !ambiguous) return value;
+  }
+
   return null;
 }
 
@@ -62,7 +153,7 @@ async function scrapeLinkedIn(url) {
   }
 
   const html = await res.text();
-  const count = extractFollowerCount(html);
+  const count = extractFollowerCount(html, url);
   if (count === null) {
     return { error: "Could not parse follower count from HTML" };
   }
@@ -80,7 +171,7 @@ module.exports = async function handler(req, res) {
   if (LINKEDIN_URL) {
     try {
       const result = await scrapeLinkedIn(LINKEDIN_URL);
-      if (result.count) {
+      if (typeof result.count === "number") {
         liveCount = result.count;
       } else {
         scrapeError = result.error;
