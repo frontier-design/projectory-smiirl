@@ -1,21 +1,6 @@
-/**
- * Smiirl-compatible endpoint that returns {"number": N} with the LinkedIn
- * follower count for the company configured in LINKEDIN_URL.
- *
- * Strategy:
- *   1. Try scraping the live LinkedIn page (works from residential IPs,
- *      unreliable from datacenter IPs like Vercel).
- *   2. Fall back to FOLLOWER_COUNT env var (always works — update manually
- *      in the Vercel dashboard when scraping is blocked).
- *
- * Smiirl polls this URL every ~5 minutes and expects: {"number": 1682}
- */
-
 const FALLBACK_COUNT = Number(process.env.FOLLOWER_COUNT) || null;
 const LINKEDIN_URL =
-  process.env.LINKEDIN_URL ||
-  process.env.LINKEDIN_COMPANY_URL ||
-  "";
+  process.env.LINKEDIN_URL || process.env.LINKEDIN_COMPANY_URL || "";
 
 function buildCookieHeader() {
   const raw = (process.env.LINKEDIN_COOKIE || "").trim();
@@ -69,7 +54,11 @@ async function scrapeLinkedIn(url) {
   const res = await fetch(url, { redirect: "follow", headers });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    return { error: `HTTP ${res.status}`, status: res.status, body: text.slice(0, 200) };
+    return {
+      error: `HTTP ${res.status}`,
+      status: res.status,
+      body: text.slice(0, 200),
+    };
   }
 
   const html = await res.text();
