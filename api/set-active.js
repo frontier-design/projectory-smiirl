@@ -1,18 +1,17 @@
-import { put, list } from "@vercel/blob";
+import { put, get } from "@vercel/blob";
 
 const VALID_FORMS = ["combo-convo", "venting-machine", "laser-focus"];
 
 async function readActiveForm() {
   try {
-    const { blobs } = await list({
-      prefix: "active-form",
+    const result = await get("active-form.json", {
+      access: "private",
+      useCache: false,
       token: process.env.BLOB_READ_WRITE_TOKEN,
     });
-    if (blobs.length > 0) {
-      const response = await fetch(blobs[0].url);
-      const data = await response.json();
-      if (data.form && VALID_FORMS.includes(data.form)) return data.form;
-    }
+    if (!result || !result.stream) return null;
+    const data = await new Response(result.stream).json();
+    if (data.form && VALID_FORMS.includes(data.form)) return data.form;
   } catch {
     // fall through
   }
@@ -47,10 +46,11 @@ export default async function handler(req, res) {
     }
 
     const blob = await put("active-form.json", JSON.stringify({ form }), {
-      access: "public",
+      access: "private",
       addRandomSuffix: false,
       allowOverwrite: true,
       contentType: "application/json",
+      token: process.env.BLOB_READ_WRITE_TOKEN,
     });
 
     return res.status(200).json({ ok: true, form, url: blob.url });

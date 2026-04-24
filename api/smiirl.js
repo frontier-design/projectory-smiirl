@@ -1,4 +1,4 @@
-import { list } from "@vercel/blob";
+import { get } from "@vercel/blob";
 
 const FORMS = {
   "combo-convo": {
@@ -18,13 +18,13 @@ const FORMS = {
 
 async function getActiveForm() {
   try {
-    const { blobs } = await list({
-      prefix: "active-form",
+    const result = await get("active-form.json", {
+      access: "private",
+      useCache: false,
       token: process.env.BLOB_READ_WRITE_TOKEN,
     });
-    if (blobs.length > 0) {
-      const response = await fetch(blobs[0].url);
-      const data = await response.json();
+    if (result && result.stream) {
+      const data = await new Response(result.stream).json();
       if (data.form && FORMS[data.form]) return data.form;
     }
   } catch {
