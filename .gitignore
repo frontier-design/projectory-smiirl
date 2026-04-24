@@ -1,4 +1,9 @@
 node_modules
+dist
 .vercel
 .env.local
 .env
+.claude
+appscript
+logs
+.env.vercel
